@@ -40,6 +40,15 @@ resource_types:
 * `stable_repo`: *Optional* Override default Helm stable repo <https://kubernetes-charts.storage.googleapis.com>. Useful if running helm deploys without internet access.
 * `tracing_enabled`: *Optional.* Enable extremely verbose tracing for this resource. Useful when developing the resource itself. May allow secrets to be displayed. (Default: false)
 * `helm_setup_purge_all`: *Optional.* Delete and purge every helm release. Use with extreme caution. (Default: false)
+#### Source Configuration - AWS EKS options
+* `use_aws_iam_authenticator`: *Optional.* If true, the aws_iam_authenticator, required for connecting with EKS, is used.
+* `assume_aws_role`: *Optional.* When using aws_iam_authenticator. If true, a role will be assumed before using the aws_iam_authenticator to connect to EKS.
+* `aws_region`: *Optional.* When using the optional aws_iam_authenticator and optional assume_aws_role, setting the aws_region is required. This defaults to us-east-1
+* `aws_secret_access_key`: *Optional* Default to empty. It is going to be used together with aws_secret_key_id instead of the aws_iam_authenticator.
+* `aws_access_key_id`: *Optional* Default to empty. It is going to be used together with aws_secret_access_key instead of the aws_iam_authenticator.
+* `aws_eks_cluster_name`: *Optional.* the AWS EKS cluster name, required when use_aws_iam_authenticator or use_awscli_eks_auth is true.
+##### AWS CLI shortcut
+* `use_awscli_eks_auth`: *Optional* Defaults to false. If "true", uses the awscli generate the kube config. You can even leave out cluster_url and cluster_ca then. Required is only the aws_eks_cluster_name
 
 ## Behavior
 
@@ -83,6 +92,7 @@ Deploy an helm chart
 * `wait`: *Optional.* Allows deploy task to sleep for X seconds before continuing to next task. Allows pods to restart and become stable, useful where dependency between pods exists. (Default: 0)
 * `kubeconfig_path`: *Optional.* File containing a kubeconfig. Overrides source configuration for cluster, token, and admin config.
 * `show_diff`: *Optional.* Show the diff that is applied if upgrading an existing successful release. Will not be used when `devel` is set. (Default: false)
+* `disable_openapi_validation`: *Optional.* The upgrade process will not validate rendered templates against the Kubernetes OpenAPI Schema. (Default: false)
 
 ## Example
 
@@ -125,4 +135,41 @@ jobs:
       - key: image.tag
         path: version/image_tag # Read value from version/number
         type: string            # Make sure it's interpreted as a string by Helm (not a number)
+```
+
+Example EKS config:
+```yaml
+resource_types:
+- name: helm
+  type: docker-image
+  source:
+    repository: yourrepo/concourse-helm-eks-resource
+
+standard-artifactory-helm-source: &STANDARD-ARTIFACTORY-HELM-SOURCE
+    use_awscli_eks_auth: "true"
+    repos:
+      - name: {{ artifactory.repository }}
+        url: {{ artifactory.url }}/{{ artifactory.repository }}
+        username: {{ artifactory.user }}
+        password: "{{ artifactory_password }}"
+
+- name: fluentd-chart
+  type: helm
+  source:
+    <<: *STANDARD-ARTIFACTORY-HELM-SOURCE
+    aws_eks_cluster_name: someekscluster
+    assume_aws_role: arn:aws:iam::{{someaccount}}:role/somerole
+    namespace: kube-system
+    release: fluentd
+
+jobs:
+- name: helm-rollout-on-{{somecluster}}
+  plan:
+  - get: values
+    trigger: true
+  - put: fluentd-chart-on-{{account}}
+    params:
+      chart: {{ artifactory.repository }}/fluentd-cloudwatch
+      values: values/kubernetes/charts/fluentd/values.yaml
+      recreate_pods: true
 ```

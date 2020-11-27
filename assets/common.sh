@@ -7,16 +7,101 @@ elif [ -n "$namespace_overwrite" ]; then
   namespace=$namespace
 fi
 
+get_aws_variables() {
+  aws_region=$(jq -r '.source.aws_region // ""' < $payload)
+  if [ -z "$aws_region" ]; then
+    echo 'No aws region specified in the source configuration with parameter aws_region. Defaulting to us-east-1.'
+    aws_region="us-east-1"
+  fi
+  export AWS_DEFAULT_REGION=$aws_region
+
+  aws_secret_access_key=$(jq -r '.source.aws_secret_access_key // ""' < $payload)
+  if [ ! -z "$aws_secret_access_key" ]; then
+    export AWS_SECRET_ACCESS_KEY=$aws_secret_access_key
+  fi
+
+  aws_access_key_id=$(jq -r '.source.aws_access_key_id // ""' < $payload)
+  if [ ! -z "$aws_access_key_id" ]; then
+    export AWS_ACCESS_KEY_ID=$aws_access_key_id
+  fi
+
+  # Optional. Use the AWS EKS authenticator
+  assume_aws_role=$(jq -r '.source.assume_aws_role // ""' < $payload)
+  if [ ! -z "$assume_aws_role" ]; then
+    echo "Assuming aws role with arn $assume_aws_role"
+    export temp_credentials=$(aws sts assume-role --role-arn $assume_aws_role --role-session-name concourse-helm-resource-session)
+    export AWS_ACCESS_KEY_ID=$(echo ${temp_credentials} | jq -r '.Credentials.AccessKeyId') AWS_SESSION_TOKEN=$(echo ${temp_credentials} | jq -r '.Credentials.SessionToken') AWS_SECRET_ACCESS_KEY=$(echo ${temp_credentials} | jq -r ' .Credentials.SecretAccessKey')
+  fi
+}
+
+generate_awscli_kubeconfig() {
+  get_aws_variables
+
+  local aws_eks_cluster_name
+  aws_eks_cluster_name="$(jq -r '.source.aws_eks_cluster_name // ""' < "$payload")"
+  aws eks update-kubeconfig --name $aws_eks_cluster_name
+}
+
+generate_aws_kubeconfig() {
+  get_aws_variables
+
+  local use_aws_iam_authenticator
+  use_aws_iam_authenticator="$(jq -r '.source.use_aws_iam_authenticator // ""' < "$payload")"
+  local aws_eks_cluster_name
+  aws_eks_cluster_name="$(jq -r '.source.aws_eks_cluster_name // ""' < "$payload")"
+  if [[ "$use_aws_iam_authenticator" == "true" ]]; then
+    if [ -z "$aws_eks_cluster_name" ]; then
+      echo 'You must specify aws_eks_cluster_name when using aws_iam_authenticator.'
+      exit 1
+    fi
+    local kubeconfig_file_aws
+    kubeconfig_file_aws="$(mktemp "$TMPDIR/kubernetes-resource-kubeconfig-aws.XXXXXX")"
+    cat <<EOF > "$kubeconfig_file_aws"
+users:
+- name: admin
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1alpha1
+      args:
+      - token
+      - -i
+      - ${aws_eks_cluster_name}
+      command: aws-iam-authenticator
+      env: null
+EOF
+    # Merge two kubeconfig files
+    local tmpfile
+    tmpfile="$(mktemp)"
+    local kubeconfig_file
+    kubeconfig_file="/root/.kube/config"
+    KUBECONFIG="$kubeconfig_file:$kubeconfig_file_aws" kubectl config view --flatten > "$tmpfile"
+
+    #remove old user data before merging
+    kubectl config unset users
+
+    cat "$tmpfile" > $kubeconfig_file
+  fi
+}
+
 setup_kubernetes() {
   payload=$1
   source=$2
 
   mkdir -p /root/.kube
-  kubeconfig_path=$(jq -r '.params.kubeconfig_path // ""' < $payload)
+  kubeconfig_path=$(jq -r '.source.kubeconfig_path // ""' < $payload)
   absolute_kubeconfig_path="${source}/${kubeconfig_path}"
+  use_awscli_eks_auth="$(jq -r '.source.use_awscli_eks_auth // "false"' < "$payload")"
   if [ -f "$absolute_kubeconfig_path" ]; then
     cp "$absolute_kubeconfig_path" "/root/.kube/config"
   else
+    # shortcut using awscli for eks
+    if [ "$use_awscli_eks_auth" == "true" ]; then
+      echo "skipping all and using aws cli to generate kubeconfig"
+      generate_awscli_kubeconfig
+      kubectl version
+      return 0
+    fi
+
     # Setup kubectl
     cluster_url=$(jq -r '.source.cluster_url // ""' < $payload)
     if [ -z "$cluster_url" ]; then
@@ -29,7 +114,7 @@ setup_kubernetes() {
       admin_key=$(jq -r '.source.admin_key // ""' < $payload)
       admin_cert=$(jq -r '.source.admin_cert // ""' < $payload)
       token=$(jq -r '.source.token // ""' < $payload)
-      token_path=$(jq -r '.params.token_path // ""' < $payload)
+      token_path=$(jq -r '.source.token_path // ""' < $payload)
 
       if [ "$insecure_cluster" == "true" ]; then
         kubectl config set-cluster default --server=$cluster_url --insecure-skip-tls-verify=true
@@ -43,6 +128,8 @@ setup_kubernetes() {
         kubectl config set-credentials admin --token=$(cat $source/$token_path)
       elif [ ! -z "$token" ]; then
         kubectl config set-credentials admin --token=$token
+      elif [ ! -z "$use_aws_iam_authenticator" ]; then
+        generate_aws_kubeconfig
       else
         mkdir -p /root/.kube
         key_path="/root/.kube/key.pem"

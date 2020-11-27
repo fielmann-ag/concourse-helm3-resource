@@ -1,11 +1,24 @@
-FROM alpine/helm:3.2.0
+ARG ALPINE_HELM_IMAGE=alpine/helm:3.2.0
+
+FROM $ALPINE_HELM_IMAGE
 LABEL maintainer "Yann David (@Typositoire) <davidyann88@gmail>"
 
-RUN apk add --update --upgrade --no-cache jq bash curl git
+RUN apk add --update --upgrade --no-cache \
+  python3\
+  py3-pip \
+  jq \
+  bash \
+  curl \
+  git && \
+  pip3 install --upgrade awscli
 
 ARG KUBERNETES_VERSION=1.18.2
-RUN curl -sL -o /usr/local/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/v${KUBERNETES_VERSION}/bin/linux/amd64/kubectl; \
+RUN curl -L -o /usr/local/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/v${KUBERNETES_VERSION}/bin/linux/amd64/kubectl; \
   chmod +x /usr/local/bin/kubectl
+
+ARG AWS_IAM_AUTHENTICATOR_VERSION=0.5.2
+RUN curl -L -o /usr/local/bin/aws-iam-authenticator https://github.com/kubernetes-sigs/aws-iam-authenticator/releases/download/v${AWS_IAM_AUTHENTICATOR_VERSION}/aws-iam-authenticator_${AWS_IAM_AUTHENTICATOR_VERSION}_linux_amd64 && \
+    chmod +x /usr/local/bin/aws-iam-authenticator
 
 ADD assets /opt/resource
 RUN chmod +x /opt/resource/*
