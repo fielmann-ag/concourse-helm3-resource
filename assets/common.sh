@@ -224,11 +224,8 @@ setup_repos() {
         $helm_bin repo add $name $url
       fi
     done
-
-    $helm_bin repo update
   fi
 
-  $helm_bin repo add stable https://kubernetes-charts.storage.googleapis.com
   $helm_bin repo update
 }
 
