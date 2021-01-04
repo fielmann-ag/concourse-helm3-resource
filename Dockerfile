@@ -1,4 +1,4 @@
-ARG ALPINE_HELM_IMAGE=alpine/helm:3.2.0
+ARG ALPINE_HELM_IMAGE=alpine/helm:3.4.2
 
 FROM $ALPINE_HELM_IMAGE
 LABEL maintainer "Yann David (@Typositoire) <davidyann88@gmail>"

@@ -40,6 +40,7 @@ generate_awscli_kubeconfig() {
   local aws_eks_cluster_name
   aws_eks_cluster_name="$(jq -r '.source.aws_eks_cluster_name // ""' < "$payload")"
   aws eks update-kubeconfig --name $aws_eks_cluster_name
+  chmod 600 "/root/.kube/config"
 }
 
 generate_aws_kubeconfig() {
@@ -80,6 +81,7 @@ EOF
     kubectl config unset users
 
     cat "$tmpfile" > $kubeconfig_file
+    chmod 600 $kubeconfig_file
   fi
 }
 
@@ -93,6 +95,7 @@ setup_kubernetes() {
   use_awscli_eks_auth="$(jq -r '.source.use_awscli_eks_auth // "false"' < "$payload")"
   if [ -f "$absolute_kubeconfig_path" ]; then
     cp "$absolute_kubeconfig_path" "/root/.kube/config"
+    chmod 600 "/root/.kube/config"
   else
     # shortcut using awscli for eks
     if [ "$use_awscli_eks_auth" == "true" ]; then
