@@ -226,6 +226,7 @@ setup_repos() {
     done
   fi
 
+  $helm_bin repo add stable https://charts.helm.sh/stable
   $helm_bin repo update
 }
 
